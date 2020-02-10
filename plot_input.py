@@ -7,6 +7,7 @@ Matplotlib and NumPy have to be installed.
 import argparse
 import queue
 import sys
+import pandas as pd
 
 from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
@@ -58,14 +59,34 @@ if any(c < 1 for c in args.channels):
     parser.error('argument CHANNEL: must be >= 1')
 mapping = [c - 1 for c in args.channels]  # Channel numbers start with 1
 print(f'mapping {mapping}')
+print(f"args.samplerate {args.samplerate}")
 q = queue.Queue()
 
+class AudioCallback:
+    def __init__(self, mean_n=5000):
+        self.mean_n=mean_n
+
+    def __call__(self, indata, frames, time, status):
+        print(f"frames, time, status {frames}, {time}, {status}")
+        print(indata)
+        import pdb
+        pdb.set_trace()
 
 def audio_callback(indata, frames, time, status):
     """This is called (from a separate thread) for each audio block."""
-    if status:
-        print(status, file=sys.stderr)
+    # if status:
+        # print(status, file=sys.stderr)
     # Fancy indexing with mapping creates a (necessary!) copy:
+    print(indata)
+
+    # a = indata[::args.downsample, mapping]
+    print(indata[::args.downsample, mapping])
+
+    df = pd.DataFrame(indata, columns=['indata'])
+    # print(len(a))
+    import pdb
+    pdb.set_trace()
+    # raise Exception("END")
     q.put(indata[::args.downsample, mapping])
 
 
@@ -96,6 +117,12 @@ try:
         args.samplerate = device_info['default_samplerate']
 
     length = int(args.window *  args.samplerate / (1000 * args.downsample))
+    print(f'args.window {args.window}')
+    print(f'args.samplerate {args.samplerate}')
+    print(f'args.downsample {args.downsample}')
+    print(f'length {length}')
+    # import pdb
+    # pdb.set_trace()
     plotdata = np.zeros((length, len(args.channels)))
 
     fig, ax = plt.subplots()
