@@ -12,6 +12,17 @@ import sounddevice as sd
 import subprocess
 
 
+import config as cfg
+
+
+def int_or_str(text):
+    """Helper function for argument parsing."""
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
 def to_decibels(x, scale=32767):
     return(20 * np.log10(np.sqrt(np.mean((x * scale) ** 2))))
 
@@ -75,6 +86,9 @@ class AudioCallback:
 
             self.current_volume += self.volume_mapping[direction]
             print(f"volume estimate {self.current_volume}")
+
+            if cfg.environment == "prod":
+                subprocess.Popen(cfg.key_map[direction].split(' '), stdout=subprocess.PIPE).communicate()
 
 
 def parse_args(args):
