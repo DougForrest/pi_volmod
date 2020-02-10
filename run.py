@@ -3,10 +3,7 @@
 import argparse
 import collections
 import sys
-import pandas as pd
 import os
-from matplotlib.animation import FuncAnimation
-import matplotlib.pyplot as plt
 import numpy as np
 import sounddevice as sd
 import subprocess
