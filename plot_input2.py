@@ -37,7 +37,7 @@ def to_decibles(x, scale=1):
 
 class AudioCallback:
     def __init__(self, interval=4800, target_decibles=60, decibles_upper_limit=67,
-                 decibles_lower_limit=53, scale=32767):
+                 decibles_lower_limit=40, scale=32767):
         self.tot_sum = 0
         self.tot_len = 0
         self.mean = 0
@@ -193,6 +193,8 @@ def parse_args(args):
     print(f"args.channels {args.channels}")
     return(args)
 
+def f():
+    return()
 
 def main(args):
     callback_obj = AudioCallback()
@@ -200,31 +202,35 @@ def main(args):
 
       # Channel numbers start with 1
 
-    q = queue.Queue()
+    # q = queue.Queue()
     try:
-        length = int(args.window *  args.samplerate / (1000 * args.downsample))
-        print(f'length {length}')
+        # length = int(args.window *  args.samplerate / (1000 * args.downsample))
+        # print(f'length {length}')
 
-        plotdata = np.zeros((length, len(args.channels)))
+        # plotdata = np.zeros((length, len(args.channels)))
 
-        fig, ax = plt.subplots()
-        lines = ax.plot(plotdata)
-        if len(args.channels) > 1:
-            ax.legend(['channel {}'.format(c) for c in args.channels],
-                      loc='lower left', ncol=len(args.channels))
-        ax.axis((0, len(plotdata), -1, 1))
-        ax.set_yticks([0])
-        ax.yaxis.grid(True)
-        ax.tick_params(bottom=False, top=False, labelbottom=False,
-                       right=False, left=False, labelleft=False)
-        fig.tight_layout(pad=0)
+        # fig, ax = plt.subplots()
+        # lines = ax.plot(plotdata)
+        # if len(args.channels) > 1:
+        #     ax.legend(['channel {}'.format(c) for c in args.channels],
+        #               loc='lower left', ncol=len(args.channels))
+        # ax.axis((0, len(plotdata), -1, 1))
+        # ax.set_yticks([0])
+        # ax.yaxis.grid(True)
+        # ax.tick_params(bottom=False, top=False, labelbottom=False,
+        #                right=False, left=False, labelleft=False)
+        # fig.tight_layout(pad=0)
 
-        stream = sd.InputStream(
+        with sd.InputStream(
             device=args.device, channels=max(args.channels),
-            samplerate=args.samplerate, callback=callback_obj)
-        ani = FuncAnimation(fig, update_plot, interval=args.interval, blit=True)
-        with stream:
-            plt.show()
+            samplerate=args.samplerate, callback=callback_obj):
+            print('#' * 80)
+            print('press Return to quit')
+            print('#' * 80)
+            input()
+    except KeyboardInterrupt:
+        quit('Interrupted by user')
+
     except Exception as e:
         parser.exit(type(e).__name__ + ': ' + str(e))
 
