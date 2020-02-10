@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the live microphone signal(s) with matplotlib.
 
-Matplotlib and NumPy have to be installed.
-
-"""
 import argparse
 import collections
 import sys
@@ -13,31 +9,20 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 import numpy as np
 import sounddevice as sd
-import queue
+import subprocess
 
 
-import utils
-
-
-data_folder = os.path.join('data')
-
-
-def int_or_str(text):
-    """Helper function for argument parsing."""
-    try:
-        return int(text)
-    except ValueError:
-        return text
-
-
-def to_decibles(x, scale=1):
+def to_decibels(x, scale=32767):
     return(20 * np.log10(np.sqrt(np.mean((x * scale) ** 2))))
 
 
-
 class AudioCallback:
-    def __init__(self, interval=4800, target_decibles=60, decibles_upper_limit=67,
-                 decibles_lower_limit=40, scale=32767):
+    def __init__(self, interval=4800,
+                 target_decibels=60,
+                 decibels_upper_limit=67,
+                 decibels_lower_limit=40,
+                 scale=32767):
+
         self.tot_sum = 0
         self.tot_len = 0
         self.mean = 0
@@ -46,14 +31,13 @@ class AudioCallback:
         self.scale = scale
         self.current_indata = None
         self.rolling_data = np.array([])
-        self.target_decibles = target_decibles
-        self.decibles_lst = collections.deque(maxlen=50)
-        self.decibles_upper_limit = decibles_upper_limit
-        self.decibles_lower_limit = decibles_lower_limit
+        self.target_decibels = target_decibels
+        self.decibels_lst = collections.deque(maxlen=50)
+        self.decibels_upper_limit = decibels_upper_limit
+        self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {'up': 1, 'down': -1}
         self.volume_adjustment_lst = collections.deque(maxlen=5)
-
 
     def __call__(self, indata, frames, time, status):
 
@@ -68,29 +52,21 @@ class AudioCallback:
         if len(self.rolling_data) >= self.interval:
 
             self.rolling_data = self.rolling_data[-self.interval:]
-            self.decibles_lst.append(to_decibles(self.rolling_data, scale=self.scale))
+            self.decibels_lst.append(to_decibels(self.rolling_data,
+                                                 scale=self.scale))
 
-            print(f"current decibles {self.decibles_lst[-1]}")
+            print(f"current decibels {self.decibels_lst[-1]}")
 
         volume_adjustment = 0
-        if self.decibles_lst and self.decibles_lst[-1] > self.decibles_upper_limit:
+        if self.decibels_lst and self.decibels_lst[-1] > self.decibels_upper_limit:
             volume_adjustment = 'down'
 
-            print('KEY_VOLUMEDOWN')
-
-        if self.decibles_lst and self.decibles_lst[-1] < self.decibles_lower_limit:
+        if self.decibels_lst and self.decibels_lst[-1] < self.decibels_lower_limit:
             volume_adjustment = 'up'
-
-            print('KEY_VOLUMEUP')
 
         self.volume_adjustment_lst.append(self.volume_mapping.get(volume_adjustment, 0))
         if volume_adjustment != 0:
             self.adjust_volume(volume_adjustment)
-        # import pdb
-        # pdb.set_trace()
-
-        if self.calls > 500:
-            raise Exception("END")
 
     def adjust_volume(self, direction):
 
@@ -99,47 +75,6 @@ class AudioCallback:
 
             self.current_volume += self.volume_mapping[direction]
             print(f"volume estimate {self.current_volume}")
-
-
-
-def audio_callback(indata, frames, time, status):
-    """This is called (from a separate thread) for each audio block."""
-    # if status:
-        # print(status, file=sys.stderr)
-    # Fancy indexing with mapping creates a (necessary!) copy:
-    print(indata)
-
-
-    # a = indata[::args.downsample, mapping]
-    print(indata[::args.downsample, mapping])
-
-    df = pd.DataFrame(indata, columns=['indata'])
-    # print(len(a))
-    import pdb
-    pdb.set_trace()
-    # raise Exception("END")
-    q.put(indata[::args.downsample, mapping])
-
-
-def update_plot(frame):
-    """This is called by matplotlib for each plot update.
-
-    Typically, audio callbacks happen more frequently than plot updates,
-    therefore the queue tends to contain multiple blocks of audio data.
-
-    """
-    global plotdata
-    while True:
-        try:
-            data = q.get_nowait()
-        except queue.Empty:
-            break
-        shift = len(data)
-        plotdata = np.roll(plotdata, -shift, axis=0)
-        plotdata[-shift:, :] = data
-    for column, line in enumerate(lines):
-        line.set_ydata(plotdata[:, column])
-    return lines
 
 
 def parse_args(args):
@@ -193,41 +128,20 @@ def parse_args(args):
     print(f"args.channels {args.channels}")
     return(args)
 
-def f():
-    return()
 
 def main(args):
     callback_obj = AudioCallback()
     args = parse_args(args)
 
-      # Channel numbers start with 1
-
-    # q = queue.Queue()
     try:
-        # length = int(args.window *  args.samplerate / (1000 * args.downsample))
-        # print(f'length {length}')
 
-        # plotdata = np.zeros((length, len(args.channels)))
-
-        # fig, ax = plt.subplots()
-        # lines = ax.plot(plotdata)
-        # if len(args.channels) > 1:
-        #     ax.legend(['channel {}'.format(c) for c in args.channels],
-        #               loc='lower left', ncol=len(args.channels))
-        # ax.axis((0, len(plotdata), -1, 1))
-        # ax.set_yticks([0])
-        # ax.yaxis.grid(True)
-        # ax.tick_params(bottom=False, top=False, labelbottom=False,
-        #                right=False, left=False, labelleft=False)
-        # fig.tight_layout(pad=0)
-
-        with sd.InputStream(
-            device=args.device, channels=max(args.channels),
-            samplerate=args.samplerate, callback=callback_obj):
+        with sd.InputStream(device=args.device, channels=max(args.channels),
+                            samplerate=args.samplerate, callback=callback_obj):
             print('#' * 80)
             print('press Return to quit')
             print('#' * 80)
             input()
+
     except KeyboardInterrupt:
         quit('Interrupted by user')
 
