@@ -137,7 +137,7 @@ class AudioCallback:
         print(f"volume estimate {self.current_volume}")
 
         if cfg.environment == "prod":
-            subprocess.Popen(cfg.key_map[direction].split(' '))
+            subprocess.Popen(cfg.key_map[self.volume_mapping[direction]].split(' '))
 
     def prepare_volume_adjustment(self, direction):
 
