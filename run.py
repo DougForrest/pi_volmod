@@ -2,12 +2,12 @@
 
 import argparse
 import collections
-import sys
-import os
+from datetime import datetime
 import numpy as np
+import os
 import sounddevice as sd
 import subprocess
-
+import sys
 
 import config as cfg
 
@@ -25,67 +25,110 @@ def to_decibels(x, scale=32767):
 
 
 class AudioCallback:
-    def __init__(self, interval=4800,
-                 target_decibels=60,
+    def __init__(self,
+                 samplerate=48000,
+                 interval=200,
                  decibels_upper_limit=67,
                  decibels_lower_limit=40,
                  scale=32767):
 
-        self.tot_sum = 0
-        self.tot_len = 0
-        self.mean = 0
+        self.samplerate = samplerate
         self.interval = interval
-        self.calls = 0
         self.scale = scale
         self.current_indata = None
         self.rolling_data = np.array([])
-        self.target_decibels = target_decibels
-        self.decibels_lst = collections.deque(maxlen=50)
+        self.current_decible = None
         self.decibels_upper_limit = decibels_upper_limit
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {'up': 1, 'down': -1}
-        self.volume_adjustment_lst = collections.deque(maxlen=5)
+        self.volume_adjustment_max_retries = 3
+        self.volume_adjustment_lst = collections.deque(maxlen=self.volume_adjustment_max_retries)
+        self.volume_retries = 0
+        self.last_retry = None
+        self.total_frames = 0
+        self.volume_milliseconds_delay = 100
+        self.frames_interval = int((self.samplerate / 1000) * self.interval)
 
     def __call__(self, indata, frames, time, status):
-
-        self.calls += 1
-
+        self.total_frames += frames
         self.current_indata = indata.copy().flatten()
+        self.rolling_data = np.concatenate((self.rolling_data,
+                                            self.current_indata), axis=0)
 
-        if len(self.current_indata) < self.interval:
-            self.rolling_data = np.concatenate((self.rolling_data,
-                                                self.current_indata), axis=0)
+        if self.total_frames >= self.frames_interval:
+            self.rolling_data = self.rolling_data[-self.frames_interval:]
+            self.total_frames = 0
+            self.evalute_volume()
 
-        if len(self.rolling_data) >= self.interval:
 
-            self.rolling_data = self.rolling_data[-self.interval:]
-            self.decibels_lst.append(to_decibels(self.rolling_data,
-                                                 scale=self.scale))
+    def evalute_volume(self):
+        self.current_decible = to_decibels(self.rolling_data, scale=self.scale)
 
-            print(f"current decibels {self.decibels_lst[-1]}")
+        print(f"current decibels {self.current_decible}")
 
         volume_adjustment = 0
-        if self.decibels_lst and self.decibels_lst[-1] > self.decibels_upper_limit:
+        if self.current_decible and self.current_decible > self.decibels_upper_limit:
             volume_adjustment = 'down'
 
-        if self.decibels_lst and self.decibels_lst[-1] < self.decibels_lower_limit:
+        if self.current_decible and self.current_decible < self.decibels_lower_limit:
             volume_adjustment = 'up'
 
         self.volume_adjustment_lst.append(self.volume_mapping.get(volume_adjustment, 0))
+
         if volume_adjustment != 0:
             self.adjust_volume(volume_adjustment)
 
+    def is_volume_adjustment_limit(self):
+        if abs(sum(self.volume_adjustment_lst)) == self.volume_adjustment_max_retries:
+            return (True)
+
+        return (False)
+
+    def calc_ms_decay(self, x):
+        return (2 ** (x + 3) * 100)
+
+    def retry_with_decay(self):
+        now = datetime.now()
+
+        if not self.last_retry:
+            self.last_retry = now
+            self.volume_retries += 1
+
+        milliseconds_past = (now - self.last_retry).total_seconds() * 1000
+        print(f'milliseconds_past {milliseconds_past}')
+
+        if milliseconds_past >= self.volume_milliseconds_delay:
+            self.volume_retries += 1
+            self.last_retry = now
+            self.volume_milliseconds_delay = self.calc_ms_decay(self.volume_retries)
+            print(f"self.volume_retries {self.volume_retries}")
+            print(f"self.volume_milliseconds_delay {self.volume_milliseconds_delay}")
+            print(f"self.volume_adjustment_lst {self.volume_adjustment_lst}")
+            self.volume_adjustment_lst.pop()
+            self.volume_adjustment_lst.pop()
+            print(f"self.volume_adjustment_lst {self.volume_adjustment_lst}")
+
+
     def adjust_volume(self, direction):
 
-        if (sum(self.volume_adjustment_lst) < 5) and (sum(self.volume_adjustment_lst) > -5):
-            print(f'adjusting volume {direction}')
+        print(f"adjust_volume self.volume_adjustment_lst {self.volume_adjustment_lst}")
+        if self.is_volume_adjustment_limit():
+            print('at volume adjustment limit')
+            self.retry_with_decay()
+            return (None)
 
-            self.current_volume += self.volume_mapping[direction]
-            print(f"volume estimate {self.current_volume}")
+        if abs(sum(self.volume_adjustment_lst)) < self.volume_adjustment_max_retries - 1:
+            print('reset retries')
+            self.volume_retries = 0
 
-            if cfg.environment == "prod":
-                subprocess.Popen(cfg.key_map[direction].split(' '), stdout=subprocess.PIPE).communicate()
+        print(f'adjusting volume {direction}')
+
+        self.current_volume += self.volume_mapping[direction]
+        print(f"volume estimate {self.current_volume}")
+
+        if cfg.environment == "prod":
+            subprocess.Popen(cfg.key_map[direction].split(' '))
 
 
 def parse_args(args):
@@ -112,12 +155,16 @@ def parse_args(args):
         '-w', '--window', type=float, default=200, metavar='DURATION',
         help='visible time slot (default: %(default)s ms)')
     parser.add_argument(
-        '-i', '--interval', type=float, default=30,
-        help='minimum time between plot updates (default: %(default)s ms)')
+        '-i', '--interval', type=float, default=300,
+        help='rolling window interval size (in milliseconds')
     parser.add_argument(
         '-b', '--blocksize', type=int, help='block size (in samples)')
     parser.add_argument(
         '-r', '--samplerate', type=float, help='sampling rate of audio device')
+    parser.add_argument(
+        '-ul', '--decibels_upper_limit', type=float, default=67, help='decibels upper limit')
+    parser.add_argument(
+        '-ll', '--decibels_lower_limit', type=float, default=40, help='decibels lower limit')
     parser.add_argument(
         '-n', '--downsample', type=int, default=10, metavar='N',
         help='display every Nth sample (default: %(default)s)')
@@ -141,9 +188,12 @@ def parse_args(args):
 
 
 def main(args):
-    callback_obj = AudioCallback()
-    args = parse_args(args)
 
+    args = parse_args(args)
+    callback_obj = AudioCallback(decibels_upper_limit=args.decibels_upper_limit,
+                                 decibels_lower_limit=args.decibels_lower_limit,
+                                 interval=args.interval,
+                                 samplerate=args.samplerate)
     try:
 
         with sd.InputStream(device=args.device, channels=max(args.channels),
