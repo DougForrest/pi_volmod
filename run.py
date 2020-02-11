@@ -72,6 +72,18 @@ class AudioCallback:
             if self.state == 'paused':
                 self.watch_db_levels_for_change()
 
+    def check_rolling_db_level(self, last_n=5, std_threshold=1.5):
+        decibels = np.array(self.decibels_lst)
+        rolling_dbs = decibels[:len(decibels) - last_n]
+        current_dbs = decibels[-last_n:]
+        print(f"current_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
+        print(f"rolling_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
+        if abs(current_dbs.mean() - rolling_dbs.mean()) > (std_threshold * rolling_dbs.std()):
+            return(np.sign(rolling_dbs.mean() - current_dbs.mean()))
+
+        return(0)
+
+
     def watch_db_levels_for_change(self, last_n=5, std_threshold=1.5):
 
         if len(self.decibels_lst) < last_n:
@@ -85,6 +97,8 @@ class AudioCallback:
         if abs(current_dbs.mean() - rolling_dbs.mean()) > (std_threshold * rolling_dbs.std()):
             print('running')
             self.state = 'running'
+            self.adjust_volume(-1)
+            self.adjust_volume(-1)
 
     def evalute_volume_level(self):
 
@@ -99,8 +113,9 @@ class AudioCallback:
 
         self.current_volume_adjustment = self.volume_adjustment
 
-        if self.volume_adjustment != 0:
+        if self.volume_adjustment != 0 or self.check_rolling_db_level() != 0:
             self.prepare_volume_adjustment(self.volume_adjustment)
+
 
     def calc_ms_decay(self, x):
         return (2 ** (x + 2) * 100)
@@ -141,7 +156,7 @@ class AudioCallback:
 
     def prepare_volume_adjustment(self, direction):
 
-        if direction == self.last_volume_adjustment:
+        if direction == self.last_volume_adjustment and direction == 1:
             self.retry_with_decay(direction)
             return (None)
 
