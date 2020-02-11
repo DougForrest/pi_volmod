@@ -28,7 +28,8 @@ class AudioCallback:
     def __init__(self,
                  samplerate=48000,
                  interval=200,
-                 decibels_upper_limit=67,
+                 decible_target=60,
+                 decibels_upper_limit=70,
                  decibels_lower_limit=40,
                  scale=32767):
 
@@ -38,14 +39,14 @@ class AudioCallback:
         self.current_indata = None
         self.rolling_data = np.array([])
         self.current_decibels = None
-        self.decibels_lst_len_max = 40
+        self.decibels_lst_len_max = 50
         self.decibels_lst = collections.deque(maxlen=self.decibels_lst_len_max)
+        self.decibels_target = decible_target
         self.decibels_upper_limit = decibels_upper_limit
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {1: 'up', -1: 'down'}
         self.volume_adjustment_max_retries = 3
-        self.volume_adjustment_db_lst = collections.deque(maxlen=self.volume_adjustment_max_retries)
         self.volume_retries = 0
         self.last_retry_time = None
         self.last_volume_adjustment = 0
@@ -72,24 +73,23 @@ class AudioCallback:
             if self.state == 'paused':
                 self.watch_db_levels_for_change()
 
-    def check_rolling_db_level(self, last_n=5, std_threshold=1.5):
+    def check_rolling_db_level(self, last_n=5, std_threshold=2):
         if len(self.decibels_lst) < self.decibels_lst_len_max:
             return (None)
 
         decibels = np.array(self.decibels_lst)
-        rolling_dbs = decibels[:len(decibels) - last_n]
-        current_dbs = decibels[-last_n:]
-        print(f"current_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
-        print(f"rolling_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
-        if abs(current_dbs.mean() - rolling_dbs.mean()) > (std_threshold * rolling_dbs.std()):
-            direction = np.sign(rolling_dbs.mean() - current_dbs.mean())
-            print(f'rolling adjustment {self.volume_mapping[direction]}')
-            self.volume_adjustment = direction
 
-        return(0)
+        db_range = self.decibels_upper_limit - self.decibels_lower_limit
+        if (decibels.mean() - self.decibels_target) > (0.5 * (self.decibels_upper_limit - self.decibels_target)):
+            print('rolling db upper limit')
+            self.current_volume_adjustment = -1
+
+        if (self.decibels_target - decibels.mean()) > (0.5 * (self.decibels_target - self.decibels_lower_limit)):
+            print('rolling db lower limit')
+            self.current_volume_adjustment = 1
 
 
-    def watch_db_levels_for_change(self, last_n=5, std_threshold=1.5):
+    def watch_db_levels_for_change(self, last_n=15, std_threshold=2):
 
         if len(self.decibels_lst) < last_n:
             return (None)
@@ -97,31 +97,32 @@ class AudioCallback:
         decibels = np.array(self.decibels_lst)
         rolling_dbs = decibels[:len(decibels) - last_n]
         current_dbs = decibels[-last_n:]
-        print(f"current_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
-        print(f"rolling_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
+        print(f"paused rolling_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
+        print(f"paused current_dbs mean {current_dbs.mean()} std { current_dbs.std()}")
         if abs(current_dbs.mean() - rolling_dbs.mean()) > (std_threshold * rolling_dbs.std()):
             print('running')
             self.state = 'running'
-            self.adjust_volume(-1)
+            self.decibels_lst = collections.deque(maxlen=self.decibels_lst_len_max)
+            # self.adjust_volume(-1)
 
     def evalute_volume_level(self):
 
         self.last_volume_adjustment = self.current_volume_adjustment
 
-        self.volume_adjustment = 0
+        self.current_volume_adjustment = 0
         if self.current_decibels and self.current_decibels > self.decibels_upper_limit:
-            self.volume_adjustment = -1
+            print('upper limit')
+            self.current_volume_adjustment = -1
 
         if self.current_decibels and self.current_decibels < self.decibels_lower_limit:
-            self.volume_adjustment = 1
+            print('lower limit')
+            self.current_volume_adjustment = 1
 
-        self.current_volume_adjustment = self.volume_adjustment
-
-        if self.volume_adjustment == 0:
+        if self.current_volume_adjustment == 0:
             self.check_rolling_db_level()
 
-        if self.volume_adjustment != 0:
-            self.prepare_volume_adjustment(self.volume_adjustment)
+        if self.current_volume_adjustment != 0:
+            self.prepare_volume_adjustment(self.current_volume_adjustment)
 
 
     def calc_ms_decay(self, x):
@@ -163,7 +164,7 @@ class AudioCallback:
 
     def prepare_volume_adjustment(self, direction):
 
-        if direction == self.last_volume_adjustment and direction == 1:
+        if direction == self.last_volume_adjustment:
             self.retry_with_decay(direction)
             return (None)
 
@@ -195,16 +196,16 @@ def parse_args(args):
         '-w', '--window', type=float, default=200, metavar='DURATION',
         help='visible time slot (default: %(default)s ms)')
     parser.add_argument(
-        '-i', '--interval', type=float, default=300,
+        '-i', '--interval', type=float, default=800,
         help='rolling window interval size (in milliseconds')
     parser.add_argument(
         '-b', '--blocksize', type=int, help='block size (in samples)')
     parser.add_argument(
         '-r', '--samplerate', type=float, help='sampling rate of audio device')
     parser.add_argument(
-        '-ul', '--decibels_upper_limit', type=float, default=67, help='decibels upper limit')
+        '-ul', '--decibels_upper_limit', type=float, default=70, help='decibels upper limit')
     parser.add_argument(
-        '-ll', '--decibels_lower_limit', type=float, default=40, help='decibels lower limit')
+        '-ll', '--decibels_lower_limit', type=float, default=35, help='decibels lower limit')
     parser.add_argument(
         '-n', '--downsample', type=int, default=10, metavar='N',
         help='display every Nth sample (default: %(default)s)')
