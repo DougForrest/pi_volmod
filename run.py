@@ -82,7 +82,9 @@ class AudioCallback:
         print(f"current_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
         print(f"rolling_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
         if abs(current_dbs.mean() - rolling_dbs.mean()) > (std_threshold * rolling_dbs.std()):
-            return(np.sign(rolling_dbs.mean() - current_dbs.mean()))
+            direction = np.sign(rolling_dbs.mean() - current_dbs.mean())
+            print(f'rolling adjustment {self.volume_mapping[direction]}')
+            self.volume_adjustment = direction
 
         return(0)
 
@@ -101,7 +103,6 @@ class AudioCallback:
             print('running')
             self.state = 'running'
             self.adjust_volume(-1)
-            self.adjust_volume(-1)
 
     def evalute_volume_level(self):
 
@@ -116,7 +117,10 @@ class AudioCallback:
 
         self.current_volume_adjustment = self.volume_adjustment
 
-        if self.volume_adjustment != 0 or self.check_rolling_db_level() != 0:
+        if self.volume_adjustment == 0:
+            self.check_rolling_db_level()
+
+        if self.volume_adjustment != 0:
             self.prepare_volume_adjustment(self.volume_adjustment)
 
 
