@@ -37,18 +37,23 @@ class AudioCallback:
         self.scale = scale
         self.current_indata = None
         self.rolling_data = np.array([])
-        self.current_decible = None
+        self.current_decibels = None
+        self.decibels_lst_len_max = 40
+        self.decibels_lst = collections.deque(maxlen=self.decibels_lst_len_max)
         self.decibels_upper_limit = decibels_upper_limit
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
-        self.volume_mapping = {'up': 1, 'down': -1}
+        self.volume_mapping = {1: 'up', -1: 'down'}
         self.volume_adjustment_max_retries = 3
-        self.volume_adjustment_lst = collections.deque(maxlen=self.volume_adjustment_max_retries)
+        self.volume_adjustment_db_lst = collections.deque(maxlen=self.volume_adjustment_max_retries)
         self.volume_retries = 0
-        self.last_retry = None
+        self.last_retry_time = None
+        self.last_volume_adjustment = 0
+        self.current_volume_adjustment = 0
         self.total_frames = 0
         self.volume_milliseconds_delay = 100
         self.frames_interval = int((self.samplerate / 1000) * self.interval)
+        self.state = 'running'
 
     def __call__(self, indata, frames, time, status):
         self.total_frames += frames
@@ -59,76 +64,88 @@ class AudioCallback:
         if self.total_frames >= self.frames_interval:
             self.rolling_data = self.rolling_data[-self.frames_interval:]
             self.total_frames = 0
-            self.evalute_volume()
+            self.current_decibels = to_decibels(self.rolling_data, scale=self.scale)
+            self.decibels_lst.append(self.current_decibels)
+            print(f"current decibels {self.current_decibels}")
+            if self.state == 'running':
+                self.evalute_volume_level()
+            if self.state == 'paused':
+                self.watch_db_levels_for_change()
 
+    def watch_db_levels_for_change(self, last_n=5, std_threshold=1.5):
 
-    def evalute_volume(self):
-        self.current_decible = to_decibels(self.rolling_data, scale=self.scale)
+        if len(self.decibels_lst) < last_n:
+            return (None)
 
-        print(f"current decibels {self.current_decible}")
+        decibels = np.array(self.decibels_lst)
+        rolling_dbs = decibels[:len(decibels) - last_n]
+        current_dbs = decibels[-last_n:]
+        print(f"current_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
+        print(f"rolling_dbs mean {rolling_dbs.mean()} std { rolling_dbs.std()}")
+        if abs(current_dbs.mean() - rolling_dbs.mean()) > (std_threshold * rolling_dbs.std()):
+            print('running')
+            self.state = 'running'
 
-        volume_adjustment = 0
-        if self.current_decible and self.current_decible > self.decibels_upper_limit:
-            volume_adjustment = 'down'
+    def evalute_volume_level(self):
 
-        if self.current_decible and self.current_decible < self.decibels_lower_limit:
-            volume_adjustment = 'up'
+        self.last_volume_adjustment = self.current_volume_adjustment
 
-        self.volume_adjustment_lst.append(self.volume_mapping.get(volume_adjustment, 0))
+        self.volume_adjustment = 0
+        if self.current_decibels and self.current_decibels > self.decibels_upper_limit:
+            self.volume_adjustment = -1
 
-        if volume_adjustment != 0:
-            self.adjust_volume(volume_adjustment)
+        if self.current_decibels and self.current_decibels < self.decibels_lower_limit:
+            self.volume_adjustment = 1
 
-    def is_volume_adjustment_limit(self):
-        if abs(sum(self.volume_adjustment_lst)) == self.volume_adjustment_max_retries:
-            return (True)
+        self.current_volume_adjustment = self.volume_adjustment
 
-        return (False)
+        if self.volume_adjustment != 0:
+            self.prepare_volume_adjustment(self.volume_adjustment)
 
     def calc_ms_decay(self, x):
-        return (2 ** (x + 3) * 100)
+        return (2 ** (x + 2) * 100)
 
-    def retry_with_decay(self):
+    def retry_with_decay(self, direction):
+        print('retry with decay')
+        if self.volume_retries > self.volume_adjustment_max_retries:
+            print('paused')
+            self.volume_retries = 0
+            self.state = 'paused'
+            return (None)
+
         now = datetime.now()
 
-        if not self.last_retry:
-            self.last_retry = now
+        if not self.last_retry_time:
+            self.last_retry_time = now
             self.volume_retries += 1
 
-        milliseconds_past = (now - self.last_retry).total_seconds() * 1000
+        milliseconds_past = (now - self.last_retry_time).total_seconds() * 1000
         print(f'milliseconds_past {milliseconds_past}')
 
         if milliseconds_past >= self.volume_milliseconds_delay:
             self.volume_retries += 1
-            self.last_retry = now
+            self.last_retry_time = now
             self.volume_milliseconds_delay = self.calc_ms_decay(self.volume_retries)
             print(f"self.volume_retries {self.volume_retries}")
             print(f"self.volume_milliseconds_delay {self.volume_milliseconds_delay}")
-            print(f"self.volume_adjustment_lst {self.volume_adjustment_lst}")
-            self.volume_adjustment_lst.pop()
-            self.volume_adjustment_lst.pop()
-            print(f"self.volume_adjustment_lst {self.volume_adjustment_lst}")
-
+            self.adjust_volume(direction)
 
     def adjust_volume(self, direction):
+        print(f'adjusting volume {self.volume_mapping[direction]}')
 
-        print(f"adjust_volume self.volume_adjustment_lst {self.volume_adjustment_lst}")
-        if self.is_volume_adjustment_limit():
-            print('at volume adjustment limit')
-            self.retry_with_decay()
-            return (None)
-
-        if abs(sum(self.volume_adjustment_lst)) < self.volume_adjustment_max_retries - 1:
-            print('reset retries')
-            self.volume_retries = 0
-
-        print(f'adjusting volume {direction}')
-
-        self.current_volume += self.volume_mapping[direction]
+        self.current_volume += direction
         print(f"volume estimate {self.current_volume}")
 
         if cfg.environment == "prod":
             subprocess.Popen(cfg.key_map[direction].split(' '))
+
+    def prepare_volume_adjustment(self, direction):
+
+        if direction == self.last_volume_adjustment:
+            self.retry_with_decay(direction)
+
+        self.volume_retries = 0
+        self.adjust_volume(direction)
 
 
 def parse_args(args):
