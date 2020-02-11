@@ -73,6 +73,9 @@ class AudioCallback:
                 self.watch_db_levels_for_change()
 
     def check_rolling_db_level(self, last_n=5, std_threshold=1.5):
+        if len(self.decibels_lst) < self.decibels_lst_len_max:
+            return (None)
+
         decibels = np.array(self.decibels_lst)
         rolling_dbs = decibels[:len(decibels) - last_n]
         current_dbs = decibels[-last_n:]
