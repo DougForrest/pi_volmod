@@ -143,6 +143,7 @@ class AudioCallback:
 
         if direction == self.last_volume_adjustment:
             self.retry_with_decay(direction)
+            return (None)
 
         self.volume_retries = 0
         self.adjust_volume(direction)
