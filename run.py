@@ -28,7 +28,7 @@ class AudioCallback:
     def __init__(self,
                  samplerate=48000,
                  interval=200,
-                 decible_target=60,
+                 decibels_target=60,
                  decibels_upper_limit=70,
                  decibels_lower_limit=40,
                  scale=32767):
@@ -41,12 +41,14 @@ class AudioCallback:
         self.current_decibels = None
         self.decibels_lst_len_max = 50
         self.decibels_lst = collections.deque(maxlen=self.decibels_lst_len_max)
-        self.decibels_target = decible_target
+        self.decibels_target = decibels_target
         self.decibels_upper_limit = decibels_upper_limit
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {1: 'up', -1: 'down'}
         self.volume_adjustment_max_retries = 3
+        self.volume_adjustment_lst_len = 4
+        self.volume_adjustment_lst = collections.deque(maxlen=self.volume_adjustment_lst_len)
         self.volume_retries = 0
         self.last_retry_time = None
         self.last_volume_adjustment = 0
@@ -88,6 +90,14 @@ class AudioCallback:
             print('rolling db lower limit')
             self.current_volume_adjustment = 1
 
+    def check_for_multiple_down_vol_adjustments(self):
+        """Return volume to normal after many down volume adjustments"""
+        if len(self.volume_adjustment_lst) < self.volume_adjustment_lst_len:
+            return (None)
+
+        if (sum(self.volume_adjustment_lst) <= -(self.volume_adjustment_lst_len - 1)) and (self.volume_adjustment_lst[-1] == 0):
+            print('volume up in response to multiple volume down adjustments')
+            self.current_volume_adjustment = 1
 
     def watch_db_levels_for_change(self, last_n=15, std_threshold=2):
 
@@ -108,8 +118,8 @@ class AudioCallback:
     def evalute_volume_level(self):
 
         self.last_volume_adjustment = self.current_volume_adjustment
-
         self.current_volume_adjustment = 0
+
         if self.current_decibels and self.current_decibels > self.decibels_upper_limit:
             print('upper limit')
             self.current_volume_adjustment = -1
@@ -120,6 +130,7 @@ class AudioCallback:
 
         if self.current_volume_adjustment == 0:
             self.check_rolling_db_level()
+            self.check_for_multiple_down_vol_adjustments()
 
         if self.current_volume_adjustment != 0:
             self.prepare_volume_adjustment(self.current_volume_adjustment)
@@ -165,8 +176,11 @@ class AudioCallback:
     def prepare_volume_adjustment(self, direction):
 
         if direction == self.last_volume_adjustment:
-            self.retry_with_decay(direction)
-            return (None)
+            if self.volume_mapping[direction] == 'up':
+                self.retry_with_decay(direction)
+                return (None)
+            # else:
+            #     self.volume_mapping[direction] == 'up':
 
         self.volume_retries = 0
         self.adjust_volume(direction)
@@ -175,40 +189,40 @@ class AudioCallback:
 def parse_args(args):
 
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument(
-        '-l', '--list-devices', action='store_true',
-        help='show list of audio devices and exit')
+    parser.add_argument('-s', '--show-devices',
+                        action='store_true',
+                        help='show list of audio devices and exit')
     args, remaining = parser.parse_known_args()
-    if args.list_devices:
+    if args.show_devices:
         print(sd.query_devices())
         parser.exit(0)
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        parents=[parser])
-    parser.add_argument(
-        'channels', type=int, default=[1], nargs='*', metavar='CHANNEL',
-        help='input channels to plot (default: the first)')
-    parser.add_argument(
-        '-d', '--device', type=int_or_str,
-        help='input device (numeric ID or substring)')
-    parser.add_argument(
-        '-w', '--window', type=float, default=200, metavar='DURATION',
-        help='visible time slot (default: %(default)s ms)')
-    parser.add_argument(
-        '-i', '--interval', type=float, default=800,
-        help='rolling window interval size (in milliseconds')
-    parser.add_argument(
-        '-b', '--blocksize', type=int, help='block size (in samples)')
-    parser.add_argument(
-        '-r', '--samplerate', type=float, help='sampling rate of audio device')
-    parser.add_argument(
-        '-ul', '--decibels_upper_limit', type=float, default=70, help='decibels upper limit')
-    parser.add_argument(
-        '-ll', '--decibels_lower_limit', type=float, default=35, help='decibels lower limit')
-    parser.add_argument(
-        '-n', '--downsample', type=int, default=10, metavar='N',
-        help='display every Nth sample (default: %(default)s)')
+    parser = argparse.ArgumentParser(description=__doc__,
+                        formatter_class=argparse.RawDescriptionHelpFormatter,
+                        parents=[parser])
+    parser.add_argument('channels', type=int,
+                        default=[1], nargs='*', metavar='CHANNEL',
+                        help='input channels to plot (default: the first)')
+    parser.add_argument('-d', '--device', type=int_or_str,
+                        help='input device (numeric ID or substring)')
+    parser.add_argument('-w', '--window',
+                        type=float, default=200, metavar='DURATION',
+                        help='visible time slot (default: %(default)s ms)')
+    parser.add_argument('-i', '--interval', type=float, default=300,
+                        help='rolling window interval size (in milliseconds (default: %(default)s))')
+    parser.add_argument('-b', '--blocksize',
+                        type=int, help='block size (in samples)')
+    parser.add_argument('-r', '--samplerate',
+                        type=float, help='sampling rate of audio device')
+    parser.add_argument('-u', '--decibels_upper_limit',
+                        type=int, default=70, help='decibels upper limit (default: %(default)s)')
+    parser.add_argument('-l', '--decibels_lower_limit',
+                        type=int, default=35, help='decibels lower limit  (default: %(default)s)')
+    parser.add_argument('-n', '--downsample',
+                        type=int, default=10, metavar='N',
+                        help='display every Nth sample (default: %(default)s)')
+    parser.add_argument('-t', '--decibels_target',
+                        type=int, default=60, metavar='N',
+                        help='target decibels (default: %(default)s)')
     args = parser.parse_args(remaining)
 
     if args.samplerate is None:
@@ -217,6 +231,7 @@ def parse_args(args):
 
     if any(c < 1 for c in args.channels):
         parser.error('argument CHANNEL: must be >= 1')
+
     args.mapping = [c - 1 for c in args.channels]
     print(f'args.window {args.window}')
     print(f'args.samplerate {args.samplerate}')
@@ -231,7 +246,8 @@ def parse_args(args):
 def main(args):
 
     args = parse_args(args)
-    callback_obj = AudioCallback(decibels_upper_limit=args.decibels_upper_limit,
+    callback_obj = AudioCallback(decibels_target=args.decibels_target,
+                                 decibels_upper_limit=args.decibels_upper_limit,
                                  decibels_lower_limit=args.decibels_lower_limit,
                                  interval=args.interval,
                                  samplerate=args.samplerate)
