@@ -46,9 +46,9 @@ class AudioCallback:
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {1: 'up', -1: 'down'}
-        self.volume_adjustment_max_retries = 3
-        self.volume_adjustment_lst_len = 4
-        self.volume_adjustment_lst = collections.deque(maxlen=self.volume_adjustment_lst_len)
+        self.volume_adjustment_max_retries = 8
+        self.volume_level_adj_lst_len = 10
+        self.volume_level_adj_lst = collections.deque(maxlen=self.volume_level_adj_lst_len)
         self.volume_retries = 0
         self.last_retry_time = None
         self.last_volume_adjustment = 0
@@ -76,6 +76,7 @@ class AudioCallback:
                 self.watch_db_levels_for_change()
 
     def check_rolling_db_level(self, last_n=5, std_threshold=2):
+        """Check for long running differences in volume level"""
         if len(self.decibels_lst) < self.decibels_lst_len_max:
             return (None)
 
@@ -92,11 +93,14 @@ class AudioCallback:
 
     def check_for_multiple_down_vol_adjustments(self):
         """Return volume to normal after many down volume adjustments"""
-        if len(self.volume_adjustment_lst) < self.volume_adjustment_lst_len:
+        print(f"check_for_multiple_down_vol_adjustments {self.volume_level_adj_lst}")
+        if len(self.volume_level_adj_lst) != self.volume_level_adj_lst_len:
             return (None)
 
-        if (sum(self.volume_adjustment_lst) <= -(self.volume_adjustment_lst_len - 1)) and (self.volume_adjustment_lst[-1] == 0):
+        if (sum(self.volume_level_adj_lst) < 0) and (self.volume_level_adj_lst[-1] == 0):
+
             print('volume up in response to multiple volume down adjustments')
+            print(f"{sum(self.volume_level_adj_lst)} {self.volume_level_adj_lst[-1]}")
             self.current_volume_adjustment = 1
 
     def watch_db_levels_for_change(self, last_n=15, std_threshold=2):
@@ -135,23 +139,18 @@ class AudioCallback:
         if self.current_volume_adjustment != 0:
             self.prepare_volume_adjustment(self.current_volume_adjustment)
 
+        self.volume_level_adj_lst.append(self.current_volume_adjustment)
 
     def calc_ms_decay(self, x):
         return (2 ** (x + 2) * 100)
 
     def retry_with_decay(self, direction):
         print('retry with decay')
-        if self.volume_retries > self.volume_adjustment_max_retries:
-            print('paused')
-            self.volume_retries = 0
-            self.state = 'paused'
-            return (None)
 
         now = datetime.now()
 
         if not self.last_retry_time:
             self.last_retry_time = now
-            self.volume_retries += 1
 
         milliseconds_past = (now - self.last_retry_time).total_seconds() * 1000
         print(f'milliseconds_past {milliseconds_past}')
@@ -170,17 +169,35 @@ class AudioCallback:
         self.current_volume += direction
         print(f"volume estimate {self.current_volume}")
 
+
         if cfg.environment == "prod":
             subprocess.Popen(cfg.key_map[self.volume_mapping[direction]].split(' '))
+
+    def check_volume_retry_limit(self, direction):
+        print(f'check_volume_retry_limit {self.volume_mapping[direction]}')
+        print(f'volume_retries {self.volume_retries}')
+        if self.volume_retries > self.volume_adjustment_max_retries:
+            print('volume self.volume_retries > self.volume_adjustment_max_retries')
+            if self.volume_mapping[direction] == 'up':
+                print('paused')
+                self.volume_retries = 0
+                self.state = 'paused'
+                return (None)
+            if self.volume_mapping[direction] == 'down':
+
+                raise Exception ("Volume retry limit reached check IR device")
 
     def prepare_volume_adjustment(self, direction):
 
         if direction == self.last_volume_adjustment:
+            self.check_volume_retry_limit(direction)
+            self.volume_retries += 1
             if self.volume_mapping[direction] == 'up':
                 self.retry_with_decay(direction)
                 return (None)
-            # else:
-            #     self.volume_mapping[direction] == 'up':
+            if self.volume_mapping[direction] == 'down':
+                self.adjust_volume(direction)
+                return (None)
 
         self.volume_retries = 0
         self.adjust_volume(direction)
@@ -233,13 +250,17 @@ def parse_args(args):
         parser.error('argument CHANNEL: must be >= 1')
 
     args.mapping = [c - 1 for c in args.channels]
-    print(f'args.window {args.window}')
-    print(f'args.samplerate {args.samplerate}')
-    print(f'args.downsample {args.downsample}')
-    print(f'args.mapping {args.mapping}')
-    print(f"args.samplerate {args.samplerate}")
+
+    print(f"Running at target decibels {args.decibels_target}")
+    print(f"upper limit decibels {args.decibels_upper_limit}")
+    print(f"lower limit decibels {args.decibels_lower_limit}")
+    # print(f'args.window {args.window}')
+    # print(f'args.samplerate {args.samplerate}')
+    # print(f'args.downsample {args.downsample}')
+    # print(f'args.mapping {args.mapping}')
+    # print(f"args.samplerate {args.samplerate}")
     print(f"args.device {args.device}")
-    print(f"args.channels {args.channels}")
+    # print(f"args.channels {args.channels}")
     return(args)
 
 
