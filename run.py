@@ -3,11 +3,14 @@
 import argparse
 import collections
 from datetime import datetime
+from matplotlib.animation import FuncAnimation
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sounddevice as sd
 import subprocess
 import sys
+import queue
 
 import config as cfg
 
@@ -31,7 +34,8 @@ class AudioCallback:
                  decibels_target=60,
                  decibels_upper_limit=70,
                  decibels_lower_limit=40,
-                 scale=32767):
+                 scale=32767,
+                 graph=None):
 
         self.samplerate = samplerate
         self.interval = interval
@@ -58,9 +62,12 @@ class AudioCallback:
         self.volume_milliseconds_delay = 100
         self.frames_interval = int((self.samplerate / 1000) * self.interval)
         self.state = 'running'
+        self.graph = graph
+
 
     def __call__(self, indata, frames, time, status):
         """Entry point of the callback"""
+        self.graph(indata, frames, time, status)
         self.total_frames += frames
         self.current_indata = indata.copy().flatten()
         self.rolling_data = np.concatenate((self.rolling_data,
@@ -101,7 +108,7 @@ class AudioCallback:
 
         curr_db_mean, curr_db_std, rolling_db_mean, rolling_db_std = self.calc_rolling_decibels(last_n=last_n, std_threshold=std_threshold)
 
-        if (sum(self.volume_adjustment_q) < 0) and (abs(curr_db_mean - rolling_db_mean) > (std_threshold * rolling_db_std)):
+        if (sum(self.volume_adjustment_q) < 0) and (current_db_mean <= self.decibels_target):
             print('volume up in response to multiple volume down adjustments')
             print(f"{sum(self.volume_adjustment_q)} {self.volume_adjustment_q[-1]}")
             self.current_volume_adjustment = 1
@@ -147,7 +154,6 @@ class AudioCallback:
 
         if self.current_volume_adjustment != 0:
             self.prepare_volume_adjustment(self.current_volume_adjustment)
-
 
 
     def calc_ms_decay(self, volume_retries):
@@ -262,18 +268,88 @@ def parse_args(args):
     return(args)
 
 
+
+class LinePlot:
+
+    def __init__(self, window=None, samplerate=None,
+                 downsample=None, channels=None, interval=None,
+                 mapping=None):
+        self.window = window
+        self.samplerate = samplerate
+        self.downsample = downsample
+        self.channels = channels
+        self.interval = interval
+        self.mapping = mapping
+        self.length = int(self.window * self.samplerate / (1000 * self.downsample))
+        self.plotdata = np.zeros((self.length, len(self.channels)))
+        self.q = queue.Queue()
+        self.ani = None
+
+        self.create_plot()
+
+    def create_plot(self):
+
+        fig, ax = plt.subplots()
+        self.lines = ax.plot(self.plotdata)
+        if len(self.channels) > 1:
+            ax.legend(['channel {}'.format(c) for c in self.channels],
+                      loc='lower left', ncol=len(self.channels))
+        ax.axis((0, len(self.plotdata), -1, 1))
+        ax.set_yticks([0])
+        ax.yaxis.grid(True)
+        ax.tick_params(bottom=False, top=False, labelbottom=False,
+                       right=False, left=False, labelleft=False)
+        fig.tight_layout(pad=0)
+        self.ani = FuncAnimation(fig, self.update_plot, interval=self.interval, blit=True)
+
+    def __call__(self, indata, frames, time, status):
+
+        self.q.put(indata[::self.downsample, self.mapping])
+
+    def update_plot(self, frame):
+        """This is called by matplotlib for each plot update.
+
+        Typically, audio callbacks happen more frequently than plot updates,
+        therefore the queue tends to contain multiple blocks of audio data.
+
+        """
+
+        while True:
+            try:
+                data = self.q.get_nowait()
+            except queue.Empty:
+                break
+            shift = len(data)
+            self.plotdata = np.roll(self.plotdata, -shift, axis=0)
+            self.plotdata[-shift:, :] = data
+        for column, line in enumerate(self.lines):
+            line.set_ydata(self.plotdata[:, column])
+        return self.lines
+
+
 def main(args):
 
     args = parse_args(args)
+
+    lineplt = LinePlot(window=args.window,
+                       samplerate=args.samplerate,
+                       downsample=args.downsample,
+                       channels=args.channels,
+                       interval=args.interval,
+                       mapping =args.mapping)
+
     callback_obj = AudioCallback(decibels_target=args.decibels_target,
                                  decibels_upper_limit=args.decibels_upper_limit,
                                  decibels_lower_limit=args.decibels_lower_limit,
                                  interval=args.interval,
-                                 samplerate=args.samplerate)
+                                 samplerate=args.samplerate,
+                                 graph=lineplt)
+
     try:
 
         with sd.InputStream(device=args.device, channels=max(args.channels),
                             samplerate=args.samplerate, callback=callback_obj):
+            plt.show()
             print('#' * 80)
             print('press Return to quit')
             print('#' * 80)
