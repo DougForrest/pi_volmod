@@ -50,8 +50,8 @@ class AudioCallback:
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {1: 'up', -1: 'down'}
-        self.volume_adjustment_max_retries = 8
-        self.volume_adjustment_q_len = 4
+        self.volume_adjustment_max_retries = 12
+        self.volume_adjustment_q_len = 8
         self.volume_adjustment_q = collections.deque(maxlen=self.volume_adjustment_q_len)
         self.volume_retries = 0
         self.last_retry_time = None
@@ -84,7 +84,7 @@ class AudioCallback:
             if self.state == 'paused':
                 self.watch_db_levels_for_change()
 
-    def check_rolling_db_level(self, last_n=5, std_threshold=2):
+    def check_rolling_db_level(self, last_n=5, std_threshold=1):
         """Check for long running differences in volume level"""
         if len(self.decibels_lst) < self.decibels_lst_len_max:
             return (None)
@@ -183,7 +183,7 @@ class AudioCallback:
 
                 raise Exception ("Volume retry limit reached check IR device")
 
-    def prepare_volume_adjustment(self, direction, delay=2000):
+    def prepare_volume_adjustment(self, direction, delay=200):
         now = datetime.now()
 
         milliseconds_past = (now - self.last_volume_adjustment_attempt).total_seconds() * 1000
