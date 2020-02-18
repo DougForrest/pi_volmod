@@ -116,7 +116,7 @@ class AudioCallback:
 
         curr_db_mean, curr_db_std, rolling_db_mean, rolling_db_std = self.calc_rolling_decibels(last_n=last_n, std_threshold=std_threshold)
 
-        if (sum(self.volume_adjustment_q) < 0) and (current_db_mean <= self.decibels_target):
+        if (sum(self.volume_adjustment_q) < 0) and (curr_db_mean <= self.decibels_target):
             print('volume up in response to multiple volume down adjustments')
             print(f"{sum(self.volume_adjustment_q)} {self.volume_adjustment_q[-1]}")
             self.current_volume_adjustment = 1
