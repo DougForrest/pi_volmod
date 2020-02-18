@@ -33,7 +33,7 @@ class AudioCallback:
                  interval=200,
                  decibels_target=60,
                  decibels_upper_limit=70,
-                 decibels_lower_limit=40,
+                 decibels_lower_limit=20,
                  scale=32767,
                  graph=None):
 
@@ -50,8 +50,8 @@ class AudioCallback:
         self.decibels_lower_limit = decibels_lower_limit
         self.current_volume = 5
         self.volume_mapping = {1: 'up', -1: 'down'}
-        self.volume_adjustment_max_retries = 12
-        self.volume_adjustment_q_len = 8
+        self.volume_adjustment_max_retries = 50
+        self.volume_adjustment_q_len = 12
         self.volume_adjustment_q = collections.deque(maxlen=self.volume_adjustment_q_len)
         self.volume_retries = 0
         self.last_retry_time = None
@@ -67,16 +67,24 @@ class AudioCallback:
 
     def __call__(self, indata, frames, time, status):
         """Entry point of the callback"""
-        self.graph(indata, frames, time, status)
+        # if self.graph:
+        #     self.graph(indata, frames, time, status)
         self.total_frames += frames
         self.current_indata = indata.copy().flatten()
         self.rolling_data = np.concatenate((self.rolling_data,
                                             self.current_indata), axis=0)
 
+        self.current_decibels = to_decibels(self.rolling_data, scale=self.scale)
+
+        if self.graph:
+                self.graph(self.current_decibels, self.decibels_lst)
+
         if self.total_frames >= self.frames_interval:
             self.rolling_data = self.rolling_data[-self.frames_interval:]
             self.total_frames = 0
             self.current_decibels = to_decibels(self.rolling_data, scale=self.scale)
+
+
             self.decibels_lst.append(self.current_decibels)
             print(f"current decibels {self.current_decibels}")
             if self.state == 'running':
@@ -149,7 +157,7 @@ class AudioCallback:
             self.current_volume_adjustment = 1
 
         if self.current_volume_adjustment == 0:
-            self.check_rolling_db_level()
+            # self.check_rolling_db_level()
             self.check_for_multiple_down_vol_adjustments()
 
         if self.current_volume_adjustment != 0:
@@ -272,16 +280,15 @@ def parse_args(args):
 class LinePlot:
 
     def __init__(self, window=None, samplerate=None,
-                 downsample=None, channels=None, interval=None,
+                 downsample=None, interval=None,
                  mapping=None):
         self.window = window
         self.samplerate = samplerate
         self.downsample = downsample
-        self.channels = channels
         self.interval = interval
         self.mapping = mapping
         self.length = int(self.window * self.samplerate / (1000 * self.downsample))
-        self.plotdata = np.zeros((self.length, len(self.channels)))
+        self.plotdata = np.zeros(self.length)
         self.q = queue.Queue()
         self.ani = None
 
@@ -291,10 +298,7 @@ class LinePlot:
 
         fig, ax = plt.subplots()
         self.lines = ax.plot(self.plotdata)
-        if len(self.channels) > 1:
-            ax.legend(['channel {}'.format(c) for c in self.channels],
-                      loc='lower left', ncol=len(self.channels))
-        ax.axis((0, len(self.plotdata), -1, 1))
+        ax.axis((0, len(self.plotdata), 30, 80))
         ax.set_yticks([0])
         ax.yaxis.grid(True)
         ax.tick_params(bottom=False, top=False, labelbottom=False,
@@ -302,11 +306,40 @@ class LinePlot:
         fig.tight_layout(pad=0)
         self.ani = FuncAnimation(fig, self.update_plot, interval=self.interval, blit=True)
 
-    def __call__(self, indata, frames, time, status):
-
-        self.q.put(indata[::self.downsample, self.mapping])
+    def __call__(self, indata, data2):
+        self.q.put([[indata.copy()], data2.copy()])
+        # self.q.put(indata.copy().flatten()[::self.downsample])
+        # self.q.put(indata[::self.downsample, self.mapping])
+        # self.q.put(indata[::self.downsample, self.mapping])
 
     def update_plot(self, frame):
+        """This is called by matplotlib for each plot update.
+
+        Typically, audio callbacks happen more frequently than plot updates,
+        therefore the queue tends to contain multiple blocks of audio data.
+
+        """
+
+        while True:
+            try:
+                res = self.q.get_nowait()
+            except queue.Empty:
+                break
+            print(res)
+            data, data_q = res
+            shift = len(data)
+            # print(shift)
+            print(data)
+            self.plotdata = np.roll(self.plotdata, -shift, axis=0)
+            self.plotdata[-shift:] = data
+            self.lines[0].set_ydata(np.array(data_q))
+        # for column, line in enumerate(self.lines):
+        # self.lines[0].set_ydata(self.plotdata[:])
+
+        # self.lines[0].set_ydata(data2)
+        return self.lines
+
+    def update_plot2(self, frame):
         """This is called by matplotlib for each plot update.
 
         Typically, audio callbacks happen more frequently than plot updates,
@@ -334,8 +367,7 @@ def main(args):
     lineplt = LinePlot(window=args.window,
                        samplerate=args.samplerate,
                        downsample=args.downsample,
-                       channels=args.channels,
-                       interval=args.interval,
+                       interval=30,
                        mapping =args.mapping)
 
     callback_obj = AudioCallback(decibels_target=args.decibels_target,
