@@ -33,7 +33,7 @@ class AudioCallback:
                  interval=200,
                  decibels_target=60,
                  decibels_upper_limit=70,
-                 decibels_lower_limit=20,
+                 decibels_lower_limit=10,
                  scale=32767,
                  graph=None):
 
@@ -48,7 +48,7 @@ class AudioCallback:
         self.decibels_target = decibels_target
         self.decibels_upper_limit = decibels_upper_limit
         self.decibels_lower_limit = decibels_lower_limit
-        self.current_volume = 5
+        self.current_volume = 0
         self.volume_mapping = {1: 'up', -1: 'down'}
         self.volume_adjustment_max_retries = 50
         self.volume_adjustment_q_len = 12
@@ -108,21 +108,22 @@ class AudioCallback:
             print('rolling db lower limit')
             self.current_volume_adjustment = 1
 
-    def check_for_multiple_down_vol_adjustments(self, last_n=4, std_threshold=1):
+    def check_for_multiple_down_vol_adjustments(self, last_n=4):
         """Return volume to normal after many down volume adjustments"""
-        print(f"check_for_multiple_down_vol_adjustments {self.volume_adjustment_q}")
-        if len(self.volume_adjustment_q) != self.volume_adjustment_q_len:
+        # print(f"check_for_multiple_down_vol_adjustments")
+        res = self.calc_rolling_decibels(last_n=last_n)
+
+        if res:
+            curr_db_mean, curr_db_std, rolling_db_mean, rolling_db_std = res
+        else:
             return (None)
 
-        curr_db_mean, curr_db_std, rolling_db_mean, rolling_db_std = self.calc_rolling_decibels(last_n=last_n, std_threshold=std_threshold)
-
-        if (sum(self.volume_adjustment_q) < 0) and (curr_db_mean <= self.decibels_target):
+        if (self.current_volume < 0) and (curr_db_mean <= self.decibels_target):
             print('volume up in response to multiple volume down adjustments')
-            print(f"{sum(self.volume_adjustment_q)} {self.volume_adjustment_q[-1]}")
             self.current_volume_adjustment = 1
 
-    def calc_rolling_decibels(self, last_n=15, std_threshold=2):
-        if len(self.decibels_lst) < last_n:
+    def calc_rolling_decibels(self, last_n=15):
+        if len(self.decibels_lst) <= last_n:
             return (None)
 
         decibels = np.array(self.decibels_lst)
@@ -245,7 +246,7 @@ def parse_args(args):
     parser.add_argument('-u', '--decibels_upper_limit',
                         type=int, default=70, help='decibels upper limit (default: %(default)s)')
     parser.add_argument('-l', '--decibels_lower_limit',
-                        type=int, default=35, help='decibels lower limit  (default: %(default)s)')
+                        type=int, default=10, help='decibels lower limit  (default: %(default)s)')
     parser.add_argument('-n', '--downsample',
                         type=int, default=10, metavar='N',
                         help='display every Nth sample (default: %(default)s)')
@@ -364,18 +365,17 @@ def main(args):
 
     args = parse_args(args)
 
-    lineplt = LinePlot(window=args.window,
-                       samplerate=args.samplerate,
-                       downsample=args.downsample,
-                       interval=30,
-                       mapping =args.mapping)
+    # lineplt = LinePlot(window=args.window,
+    #                    samplerate=args.samplerate,
+    #                    downsample=args.downsample,
+    #                    interval=30,
+    #                    mapping =args.mapping)
 
     callback_obj = AudioCallback(decibels_target=args.decibels_target,
                                  decibels_upper_limit=args.decibels_upper_limit,
                                  decibels_lower_limit=args.decibels_lower_limit,
                                  interval=args.interval,
-                                 samplerate=args.samplerate,
-                                 graph=lineplt)
+                                 samplerate=args.samplerate)
 
     try:
 
