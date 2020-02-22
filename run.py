@@ -373,7 +373,7 @@ def main(args):
     args = parse_args(args)
     print(f"cfg.environment {cfg.environment}")
     if cfg.environment == "prod":
-        set_volume = f"amixer -c {arg.sound_card} sset 'Mic',0 {arg.mic_volume}%"
+        set_volume = f"amixer -c {args.sound_card} sset 'Mic',0 {args.mic_volume}%"
         print('setting volume {set_volume}')
         subprocess.Popen(set_volume.split(' ')).communicate()
 
