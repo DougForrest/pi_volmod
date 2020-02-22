@@ -7,6 +7,7 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import pyfiglet
 import sounddevice as sd
 import subprocess
 import sys
@@ -64,7 +65,6 @@ class AudioCallback:
         self.state = 'running'
         self.graph = graph
 
-
     def __call__(self, indata, frames, time, status):
         """Entry point of the callback"""
         # if self.graph:
@@ -114,7 +114,7 @@ class AudioCallback:
         res = self.calc_rolling_decibels(last_n=last_n)
 
         if res:
-            curr_db_mean, curr_db_std, rolling_db_mean, rolling_db_std = res
+            curr_db_mean, _, _, _ = res
         else:
             return (None)
 
@@ -169,10 +169,11 @@ class AudioCallback:
         return (2 ** (volume_retries + 2) * 100)
 
     def adjust_volume(self, direction, delay=200):
-        print("#" * 80)
-        print(f'adjusting volume {self.volume_mapping[direction]}')
+
+        ascii_banner = pyfiglet.figlet_format(self.volume_mapping[direction])
+        print(ascii_banner)
         self.current_volume += direction
-        print(f"volume estimate {self.current_volume}")
+        print(f"Current volume balance {self.current_volume}")
         self.volume_adjustment_q.append(direction)
 
         if cfg.environment == "prod":
@@ -248,11 +249,17 @@ def parse_args(args):
     parser.add_argument('-l', '--decibels_lower_limit',
                         type=int, default=10, help='decibels lower limit  (default: %(default)s)')
     parser.add_argument('-n', '--downsample',
-                        type=int, default=10, metavar='N',
+                        type=int, default=10, metavar='DOWNSAMPLE',
                         help='display every Nth sample (default: %(default)s)')
     parser.add_argument('-t', '--decibels_target',
-                        type=int, default=60, metavar='N',
+                        type=int, default=60, metavar='TARGET',
                         help='target decibels (default: %(default)s)')
+    parser.add_argument('-m', '--mic_volume',
+                        type=int, default=20, metavar='MIC_VOLUME',
+                        help='Microphone volume (default: %(default)s)')
+    parser.add_argument('-c', '--sound_card',
+                        type=int, default=1,
+                        help='Sound card number (default: %(default)s)')
     args = parser.parse_args(remaining)
 
     if args.samplerate is None:
@@ -263,10 +270,10 @@ def parse_args(args):
         parser.error('argument CHANNEL: must be >= 1')
 
     args.mapping = [c - 1 for c in args.channels]
-
-    print(f"Running at target decibels {args.decibels_target}")
-    print(f"upper limit decibels {args.decibels_upper_limit}")
-    print(f"lower limit decibels {args.decibels_lower_limit}")
+    print("decibels")
+    print(f"target {args.decibels_target}")
+    print(f"upper limit {args.decibels_upper_limit}")
+    print(f"lower limit {args.decibels_lower_limit}")
     # print(f'args.window {args.window}')
     # print(f'args.samplerate {args.samplerate}')
     # print(f'args.downsample {args.downsample}')
@@ -364,6 +371,11 @@ class LinePlot:
 def main(args):
 
     args = parse_args(args)
+    print(f"cfg.environment {cfg.environment}")
+    if cfg.environment == "prod":
+        set_volume = f"amixer -c {arg.sound_card} sset 'Mic',0 {arg.mic_volume}%"
+        print('setting volume {set_volume}')
+        subprocess.Popen(set_volume.split(' ')).communicate()
 
     # lineplt = LinePlot(window=args.window,
     #                    samplerate=args.samplerate,
